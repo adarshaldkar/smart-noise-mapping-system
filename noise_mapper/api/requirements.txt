@@ -1,0 +1,9 @@
+influxdb==5.2.3
+flask
+numpy<2.0
+scipy
+branca
+matplotlib
+gunicorn
+gevent
+importlib-resources==5.12.0

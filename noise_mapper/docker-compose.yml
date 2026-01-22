@@ -1,0 +1,71 @@
+version: "2"
+
+services:
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
+    networks:
+      - private
+    restart: always
+
+  influxdb:
+    image: influxdb:1.7.10
+    container_name: influxdb
+    ports:
+      - "8083:8083"
+      - "8086:8086"
+      - "8090:8090"
+    networks:
+      - private
+    restart: always
+
+  noisemapper_consumer:
+    build: ./consumer
+    image: noisemapper_consumer:0.0.1
+    networks:
+      - private
+    depends_on:
+      - influxdb
+      - mosquitto
+    env_file:
+      - ./consumer/.env
+    stdin_open: true
+    tty: true
+    restart: always
+
+  noisemapper_api:
+    build: ./api
+    image: noisemapper_api:0.0.1
+    ports:
+      - "5000:5000"
+    networks:
+      - private
+    depends_on:
+      - influxdb
+    stdin_open: true
+    tty: true
+    restart: always
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:5000/').getcode()==200 else sys.exit(1)" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  mosquitto:
+    image: eclipse-mosquitto:1.6.12
+    ports:
+      - "1883:1883"
+    networks:
+      - private
+    restart: always
+    healthcheck:
+      test: [ "CMD-SHELL", "mosquitto_sub -h localhost -t '$$SYS/broker/uptime' -C 1 || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+networks:
+  private:

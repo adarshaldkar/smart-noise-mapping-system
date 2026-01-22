@@ -1,0 +1,5 @@
+paho-mqtt
+influxdb==5.2.3
+moviepy==1.0.3
+python-dotenv
+importlib-resources==5.12.0
