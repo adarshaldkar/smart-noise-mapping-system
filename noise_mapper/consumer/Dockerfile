@@ -6,6 +6,7 @@ RUN mkdir -p $NOISEMAPPER
 
 COPY requirements.txt $NOISEMAPPER/requirements.txt
 COPY main.py $NOISEMAPPER/main.py
+COPY ml_classifier.py $NOISEMAPPER/ml_classifier.py
 COPY .env $NOISEMAPPER/.env
 
 ENV AM_I_IN_A_DOCKER_CONTAINER=Yes

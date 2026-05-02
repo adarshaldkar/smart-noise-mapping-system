@@ -1,5 +1,9 @@
 paho-mqtt
 influxdb==5.2.3
-moviepy==1.0.3
 python-dotenv
 importlib-resources==5.12.0
+moviepy==1.0.3
+numpy<2.0
+tensorflow-cpu
+tensorflow-hub
+librosa

@@ -1,3 +1,0 @@
-# androidhelper
-paho-mqtt
-python-dotenv
