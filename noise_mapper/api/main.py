@@ -2,7 +2,6 @@ from influxdb import InfluxDBClient
 from datetime import datetime
 import folium
 from folium.plugins import HeatMap
-import folium.plugins
 import numpy as np
 import scipy.signal
 import branca
@@ -10,6 +9,10 @@ import flask
 from matplotlib.colors import LinearSegmentedColormap
 import logging
 import os
+import json
+import time
+import paho.mqtt.publish as publish
+import uuid
 
 logging.basicConfig(format="%(asctime)s %(levelname)-8s %(message)s",
                     level=logging.INFO,
@@ -24,51 +27,19 @@ INFLUX_DATABASE = "noisemapper"
 if os.environ.get('AM_I_IN_A_DOCKER_CONTAINER', False):
     INFLUX_HOST = "influxdb"
 else:
-    INFLUX_HOST = "0.0.0.0"
-
-LAT_LON_BOUNDS = [[41.357742, 2.109375], [41.429342, 2.230225]]
-PIXEL_SIZE_DEG_LAT = 0.00025
-PIXEL_SIZE_DEG_LON = 0.0004
-
-MAX_NOISE_RANGE = 0.02
+    INFLUX_HOST = "localhost"
 
 INFLUXDBCLIENT = InfluxDBClient(host=INFLUX_HOST, port=INFLUX_PORT, database=INFLUX_DATABASE)
 
 app = flask.Flask(__name__)
 
-
-def generate_array():
-    lat_size = abs(int((LAT_LON_BOUNDS[1][0] - LAT_LON_BOUNDS[0][0]) / PIXEL_SIZE_DEG_LAT))
-    lon_size = abs(int((LAT_LON_BOUNDS[1][1] - LAT_LON_BOUNDS[0][1]) / PIXEL_SIZE_DEG_LON))
-    return np.zeros([lat_size, lon_size, 2])
-
-
-def fill_array(arr, lat, lon, sound):
-    lat_offset_px = int((lat - LAT_LON_BOUNDS[0][0]) / PIXEL_SIZE_DEG_LAT)
-    lon_offset_px = int((lon - LAT_LON_BOUNDS[0][1]) / PIXEL_SIZE_DEG_LON)
-    arr[lat_offset_px, lon_offset_px, 0] = \
-        (arr[lat_offset_px, lon_offset_px, 0] * arr[lat_offset_px, lon_offset_px, 1] + sound) / \
-        (arr[lat_offset_px, lon_offset_px, 1] + 1)
-    arr[lat_offset_px, lon_offset_px, 1] += 1
-
-
-def generate_image_from_array(arr):
-    arr[..., 0][arr[..., 0] > MAX_NOISE_RANGE] = MAX_NOISE_RANGE
-    arr[..., 0] -= np.min(arr[..., 0])
-    arr[..., 0] /= np.max(arr[..., 0])
-    arr[..., 0] = scipy.ndimage.morphology.grey_dilation(arr[..., 0], size=(3, 3))
-
-    arr[..., 1][arr[..., 1] > 0] = 1
-    filter_kernel = [[0.25, 0.5, 0.25],
-                     [0.5, 0.5, 0.5],
-                     [0.25, 0.5, 0.25]]
-    arr[..., 1] = scipy.ndimage.morphology.grey_dilation(arr[..., 1], size=(3, 3), structure=filter_kernel) - 0.5
+# Array logic removed - using dynamic HeatMap instead
 
 
 def measurements_list_to_field_value(measurements, field_key):
     ret = []
     for measurement in measurements:
-        ret.append(measurement[field_key])
+        ret.append(measurement.get(field_key, None))
     return ret
 
 
@@ -98,29 +69,75 @@ def noisemap():
         lats = measurements_list_to_field_value(samples, "lat")
         lons = measurements_list_to_field_value(samples, "lon")
         sounds = measurements_list_to_field_value(samples, "sound")
-        # alts = measurements_list_to_field_value(samples, "alt")
-        # times = measurements_list_to_field_value(samples, "time")
 
-        mean_coords = [np.mean(lats), np.mean(lons)]
-        m = folium.Map(location=mean_coords, zoom_start=ZOOM_LEVEL_START)
+        # Filter out any rows with missing coordinates or sound
+        valid = [(la, lo, s) for la, lo, s in zip(lats, lons, sounds)
+                 if la is not None and lo is not None]
 
-        arr = generate_array()
-        for i, sound in enumerate(sounds):
-            if sound is None:
-                continue
-            fill_array(arr, lats[i], lons[i], sound)
-        generate_image_from_array(arr)
+        if not valid:
+            default_coords = [20.0, 78.0]  # India center as fallback
+            m = folium.Map(location=default_coords, zoom_start=5)
+            folium.Marker(default_coords,
+                          popup="<b>No valid data yet!</b>",
+                          icon=folium.Icon(color='blue', icon='info-sign')).add_to(m)
+            return m._repr_html_()
 
-        img = folium.raster_layers.ImageOverlay(
-            name="",
-            image=arr,
-            mercator_project=True,
-            origin="lower",
-            bounds=LAT_LON_BOUNDS,
-            colormap=CMAP,
-            zindex=1,
-        )
-        img.add_to(m)
+        lats  = [v[0] for v in valid]
+        lons  = [v[1] for v in valid]
+        sounds = [v[2] for v in valid]
+
+        # Auto-zoom to wherever the data actually is
+        min_lat, max_lat = min(lats), max(lats)
+        min_lon, max_lon = min(lons), max(lons)
+        center = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
+
+        m = folium.Map(location=center, zoom_start=15, tiles="OpenStreetMap")
+        m.fit_bounds([[min_lat - 0.05, min_lon - 0.05], [max_lat + 0.05, max_lon + 0.05]])
+
+        # Try to get noise_class if available
+        try:
+            noise_classes = measurements_list_to_field_value(result[0], "noise_class")
+            # re-filter to match valid rows
+            all_lats_raw = measurements_list_to_field_value(result[0], "lat")
+            noise_classes = [noise_classes[i] for i, la in enumerate(all_lats_raw)
+                             if la is not None]
+        except Exception:
+            noise_classes = [None] * len(lats)
+
+        # Draw blocky square rectangles
+        for i, lat in enumerate(lats):
+            s = sounds[i]
+            if s is None:
+                s = 0.0
+            # Determine color based on sound intensity
+            intensity = s * 50
+            if intensity > 0.6:
+                color = "red"
+            elif intensity > 0.3:
+                color = "orange"
+            elif intensity > 0.15:
+                color = "yellow"
+            else:
+                color = "green"
+
+            # Squares sized relative to zoom (0.0004 deg ≈ 40m at zoom 15)
+            offset = 0.0004
+            bounds = [[lat - offset, lons[i] - offset],
+                      [lat + offset, lons[i] + offset]]
+
+            nc = noise_classes[i] if i < len(noise_classes) else None
+            noise_label = nc if (nc and nc not in ("None", "null")) else "Unknown"
+            tooltip_text = f"{noise_label} | Level: {round(s * 100, 2)} dB"
+
+            folium.Rectangle(
+                bounds=bounds,
+                color=color,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.75,
+                weight=1,
+                tooltip=tooltip_text
+            ).add_to(m)
 
         fig = branca.element.Figure(height="100%")
         fig.add_child(m)
@@ -131,13 +148,45 @@ def noisemap():
             "fields": {"api_response_time": (t_f - t_i).total_seconds()},
             "time": t_f
         }
-        ret = INFLUXDBCLIENT.write_points([point_out])
-        logging.info(f"Point inserted in influx. ret={ret}. Point={point_out}")
+        INFLUXDBCLIENT.write_points([point_out])
 
         return m._repr_html_()
     except Exception as e:
         logging.error(f"Error in noisemap: {e}")
         return f"<h1>Error</h1><p>{str(e)}</p><p>Please check the logs.</p>"
+
+
+@app.route('/collect', methods=['POST'])
+def collect():
+    try:
+        # 1. Get the JSON metadata and audio file
+        metadata_str = flask.request.form.get('metadata')
+        if not metadata_str:
+            return flask.jsonify({"error": "No metadata provided"}), 400
+            
+        metadata = json.loads(metadata_str)
+        
+        if 'audio' not in flask.request.files:
+            return flask.jsonify({"error": "No audio file provided"}), 400
+            
+        audio_file = flask.request.files['audio']
+        audio_bytes = audio_file.read()
+        
+        # 2. Publish to MQTT broker so the consumer picks it up
+        broker_host = "mosquitto"
+        
+        msgs = [
+            {"topic": "pos", "payload": json.dumps(metadata), "qos": 0, "retain": False},
+            {"topic": str(metadata["time"]), "payload": audio_bytes, "qos": 0, "retain": False}
+        ]
+        
+        publish.multiple(msgs, hostname=broker_host, port=1883)
+        
+        return flask.jsonify({"status": "success", "message": "Data forwarded to ML pipeline"}), 200
+        
+    except Exception as e:
+        logging.error(f"Error in /collect endpoint: {e}")
+        return flask.jsonify({"error": str(e)}), 500
 
 
 @app.route('/heatmap')

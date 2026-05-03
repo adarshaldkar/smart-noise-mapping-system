@@ -187,12 +187,12 @@ def main():
     results = TestResults()
     results.start_timing()
     
-    # Define test suites to run
+    # Define test suites to run from consolidated tests directory
     test_suites = [
-        ('api/test_main_comprehensive.py', 'API Comprehensive Tests'),
-        ('consumer/test_consumer_comprehensive.py', 'Consumer Comprehensive Tests'),
-        ('test_system_integration.py', 'System Integration Tests'),
-        ('api/test.py', 'Original API Tests'),  # Include original tests
+        ('tests/test_api_comprehensive.py', 'API Comprehensive Tests'),
+        ('tests/test_consumer.py', 'Consumer Comprehensive Tests'),
+        ('tests/test_system_integration.py', 'System Integration Tests'),
+        ('tests/test_api_basic.py', 'Basic API Tests'),
     ]
     
     # Run each test suite

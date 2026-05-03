@@ -5,12 +5,11 @@ import json
 from moviepy.editor import AudioFileClip
 import numpy as np
 import tempfile
-import numpy as np
 import os
 from dotenv import load_dotenv
 import uuid
+from ml_classifier import classify_audio
 import logging
-import os
 
 logging.basicConfig(format="%(asctime)s %(levelname)-8s %(message)s",
                     level=logging.INFO,
@@ -53,7 +52,7 @@ def mp4_audio_to_arr(mp4_audio):
         if len(audio_array.shape) > 1:
             audio_array = np.mean(audio_array, axis=1)
             
-        return audio_array
+        return audio_array, clip.fps
         
     except Exception as e:
         # Clean up files on error
@@ -95,17 +94,28 @@ def on_message(client, userdata, message):
         rx_time = int(message.topic)
         logging.info(f"Received audio file in topic {message.topic}")
         try:
-            audio_arr = mp4_audio_to_arr(message.payload)
+            audio_arr, sample_rate = mp4_audio_to_arr(message.payload)
         except Exception as e:
             logging.error(f"Failed to do mp4 to audio arr, {e}")
-            del point[rx_time]
+            if rx_time in point:
+                del point[rx_time]
             return
         if point.get(rx_time, None) is None:
             point[rx_time] = {}
 
+        # 1. Calculate raw sound decibel level (fallback)
         point[rx_time]["sound"] = np.mean(abs(audio_arr))
+        
+        # 2. Add AI Understanding (What type of sound is this?)
+        ml_class, conf = classify_audio(audio_arr, original_sr=sample_rate)
+        if ml_class is not None:
+            point[rx_time]["noise_class"] = ml_class
+            point[rx_time]["confidence"] = conf
+        else:
+            point[rx_time]["noise_class"] = "unclassified"
+            point[rx_time]["confidence"] = 0.0
 
-    if len(point[rx_time].keys()) == 9:
+    if len(point[rx_time].keys()) >= 9:
         session_uuid = point[rx_time]["session_uuid"]
         del point[rx_time]["session_uuid"]
         user_uuid = point[rx_time]["user_uuid"]
