@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import uuid
 from ml_classifier import classify_audio
 import logging
+import librosa
 
 logging.basicConfig(format="%(asctime)s %(levelname)-8s %(message)s",
                     level=logging.INFO,
@@ -33,29 +34,81 @@ INFLUXDBCLIENT = InfluxDBClient(host=INFLUX_HOST, port=INFLUX_PORT, database=INF
 
 point = {}
 
+# All keys required from BOTH pos + audio messages before writing to InfluxDB
+REQUIRED_KEYS = {"lat", "lon", "sound", "session_uuid", "user_uuid", "type", "source", "test"}
+
+
+def compute_audio_features(audio_arr, sample_rate):
+    """
+    Computes a rich set of audio analytics features from a raw audio array.
+    All features are stored in InfluxDB and visualized in the Grafana dashboard.
+
+    Returns a dict with all computed fields.
+    """
+    features = {}
+    abs_arr = np.abs(audio_arr)
+    audio_f32 = audio_arr.astype(np.float32)
+
+    # --- Amplitude ---
+    mean_amp = float(np.mean(abs_arr))
+    features["sound"] = mean_amp                                        # raw mean amplitude (backward compat)
+    features["sound_db"] = float(20 * np.log10(max(mean_amp, 1e-9)))   # mean amplitude in dB
+    features["sound_peak"] = float(np.max(abs_arr))                     # peak amplitude (detects spikes)
+
+    # --- RMS Energy (better loudness measure than mean amplitude) ---
+    rms = float(np.sqrt(np.mean(audio_arr ** 2)))
+    features["sound_rms"] = rms
+    features["sound_rms_db"] = float(20 * np.log10(max(rms, 1e-9)))    # RMS in dB
+
+    # --- Variability ---
+    features["sound_variance"] = float(np.var(audio_arr))              # low=steady hum, high=erratic noise
+
+    # --- Zero Crossing Rate ---
+    # High ZCR = high-frequency content (speech, hiss)
+    # Low  ZCR = low-frequency content (traffic rumble)
+    zero_crossings = int(np.sum(np.diff(np.sign(audio_arr)) != 0))
+    features["zero_crossing_rate"] = float(zero_crossings / max(len(audio_arr), 1))
+
+    # --- Duration ---
+    features["duration_s"] = float(len(audio_arr) / max(sample_rate, 1))
+
+    # --- Spectral Features (via librosa) ---
+    try:
+        # Spectral Centroid — "brightness": high=sharp/alarm, low=deep rumble
+        centroid = librosa.feature.spectral_centroid(y=audio_f32, sr=sample_rate)
+        features["spectral_centroid"] = float(np.mean(centroid))
+
+        # Spectral Rolloff — frequency below which 85% of energy lies
+        # Separates speech (<4kHz) from broadband noise (>4kHz)
+        rolloff = librosa.feature.spectral_rolloff(y=audio_f32, sr=sample_rate, roll_percent=0.85)
+        features["spectral_rolloff"] = float(np.mean(rolloff))
+
+    except Exception as e:
+        logging.warning(f"Spectral feature extraction failed: {e}")
+        features["spectral_centroid"] = 0.0
+        features["spectral_rolloff"] = 0.0
+
+    return features
+
 
 def mp4_audio_to_arr(mp4_audio):
     filename = str(uuid.uuid4())
     with open(f"{filename}.mp4", "wb") as f:
         f.write(mp4_audio)
-    
+
     try:
-        # Use moviepy to extract audio
         clip = AudioFileClip(f"{filename}.mp4")
         audio_array = clip.to_soundarray()
         clip.close()
-        
-        # Clean up files
         os.remove(f"{filename}.mp4")
-        
+
         # Convert to mono if stereo
         if len(audio_array.shape) > 1:
             audio_array = np.mean(audio_array, axis=1)
-            
+
         return audio_array, clip.fps
-        
+
     except Exception as e:
-        # Clean up files on error
         if os.path.exists(f"{filename}.mp4"):
             os.remove(f"{filename}.mp4")
         raise e
@@ -68,31 +121,24 @@ def on_message(client, userdata, message):
     if message.topic == "pos":
         logging.info(f"Message received: {str(message.payload.decode('utf-8'))}")
         data = json.loads(message.payload)
-        test = data.get("test", None)
 
-        lat = data.get("lat", None)
-        lon = data.get("lon", None)
-        alt = data.get("alt", None)
-        session_uuid = data.get("session_uuid", None)
-        user_uuid = data.get("user_uuid", None)
-        location_type = data.get("type", None)
-        location_source = data.get("source", None)
         rx_time = data.get("time", None)
-
         if point.get(rx_time, None) is None:
             point[rx_time] = {}
 
-        point[rx_time]["lat"] = lat
-        point[rx_time]["lon"] = lon
-        point[rx_time]["alt"] = alt
-        point[rx_time]["session_uuid"] = session_uuid
-        point[rx_time]["user_uuid"] = user_uuid
-        point[rx_time]["type"] = location_type
-        point[rx_time]["source"] = location_source
-        point[rx_time]["test"] = test
+        point[rx_time]["lat"] = data.get("lat", None)
+        point[rx_time]["lon"] = data.get("lon", None)
+        point[rx_time]["alt"] = data.get("alt", None)
+        point[rx_time]["session_uuid"] = data.get("session_uuid", None)
+        point[rx_time]["user_uuid"] = data.get("user_uuid", None)
+        point[rx_time]["type"] = data.get("type", None)
+        point[rx_time]["source"] = data.get("source", None)
+        point[rx_time]["test"] = data.get("test", None)
+
     else:
         rx_time = int(message.topic)
         logging.info(f"Received audio file in topic {message.topic}")
+
         try:
             audio_arr, sample_rate = mp4_audio_to_arr(message.payload)
         except Exception as e:
@@ -100,13 +146,24 @@ def on_message(client, userdata, message):
             if rx_time in point:
                 del point[rx_time]
             return
+
         if point.get(rx_time, None) is None:
             point[rx_time] = {}
 
-        # 1. Calculate raw sound decibel level (fallback)
-        point[rx_time]["sound"] = np.mean(abs(audio_arr))
-        
-        # 2. Add AI Understanding (What type of sound is this?)
+        # Compute all 9 audio analytics features
+        logging.info("Computing audio features...")
+        features = compute_audio_features(audio_arr, sample_rate)
+        point[rx_time].update(features)
+        logging.info(
+            f"Audio features: rms_db={features['sound_rms_db']:.2f}dB | "
+            f"peak={features['sound_peak']:.4f} | "
+            f"zcr={features['zero_crossing_rate']:.4f} | "
+            f"centroid={features['spectral_centroid']:.1f}Hz | "
+            f"rolloff={features['spectral_rolloff']:.1f}Hz | "
+            f"duration={features['duration_s']:.2f}s"
+        )
+
+        # ML Classification — What type of sound is this?
         ml_class, conf = classify_audio(audio_arr, original_sr=sample_rate)
         if ml_class is not None:
             point[rx_time]["noise_class"] = ml_class
@@ -115,33 +172,34 @@ def on_message(client, userdata, message):
             point[rx_time]["noise_class"] = "unclassified"
             point[rx_time]["confidence"] = 0.0
 
-    if len(point[rx_time].keys()) >= 9:
-        session_uuid = point[rx_time]["session_uuid"]
-        del point[rx_time]["session_uuid"]
-        user_uuid = point[rx_time]["user_uuid"]
-        del point[rx_time]["user_uuid"]
-        location_type = point[rx_time]["type"]
-        del point[rx_time]["type"]
-        location_source = point[rx_time]["source"]
-        del point[rx_time]["source"]
-        test = point[rx_time]["test"]
-        del point[rx_time]["test"]
+    # Write to InfluxDB when we have all required fields from both pos + audio messages
+    if REQUIRED_KEYS.issubset(point[rx_time].keys()):
+        session_uuid = point[rx_time].pop("session_uuid")
+        user_uuid = point[rx_time].pop("user_uuid")
+        location_type = point[rx_time].pop("type")
+        location_source = point[rx_time].pop("source")
+        test = point[rx_time].pop("test")
+
         try:
             point_out = {
                 "measurement": "samples",
                 "fields": point[rx_time],
-                "time": int(rx_time * 1e6)
+                "time": int(rx_time * 1e9)
             }
-            ret = INFLUXDBCLIENT.write_points([point_out],
-                                              tags={"session_uuid": session_uuid,
-                                                    "user_uuid": user_uuid,
-                                                    "type": location_type,
-                                                    "source": location_source,
-                                                    "test": test})
-            logging.info(f"Point inserted in influx. ret={ret}. Point={point_out}")
+            ret = INFLUXDBCLIENT.write_points(
+                [point_out],
+                tags={
+                    "session_uuid": session_uuid,
+                    "user_uuid": user_uuid,
+                    "type": location_type,
+                    "source": location_source,
+                    "test": test
+                }
+            )
+            logging.info(f"Point inserted in influx. ret={ret}. Fields: {list(point[rx_time].keys())}")
             del point[rx_time]
         except Exception as e:
-            logging.info(f"Error writing point {point_out}: {e}")
+            logging.error(f"Error writing point: {e}")
 
 
 if __name__ == "__main__":
