@@ -1,7 +1,8 @@
 import paho.mqtt.client as mqtt
+from paho.mqtt.enums import CallbackAPIVersion
 from influxdb import InfluxDBClient
 import json
-from moviepy import AudioFileClip
+from moviepy.editor import AudioFileClip
 import numpy as np
 import tempfile
 import numpy as np
@@ -134,7 +135,7 @@ def on_message(client, userdata, message):
 
 
 if __name__ == "__main__":
-    client = mqtt.Client()
+    client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION1)
     client.on_message = on_message
     client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
     client.connect(MQTT_HOST)
