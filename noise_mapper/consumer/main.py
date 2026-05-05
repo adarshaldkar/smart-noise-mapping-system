@@ -134,6 +134,8 @@ def on_message(client, userdata, message):
         point[rx_time]["type"] = data.get("type", None)
         point[rx_time]["source"] = data.get("source", None)
         point[rx_time]["test"] = data.get("test", None)
+        point[rx_time]["user_name"] = data.get("user_name", "Anonymous")
+        point[rx_time]["audio_filename"] = data.get("audio_filename", "")
 
     else:
         rx_time = int(message.topic)
@@ -184,7 +186,7 @@ def on_message(client, userdata, message):
             point_out = {
                 "measurement": "samples",
                 "fields": point[rx_time],
-                "time": int(rx_time * 1e9)
+                "time": int(rx_time * 1e6)
             }
             ret = INFLUXDBCLIENT.write_points(
                 [point_out],

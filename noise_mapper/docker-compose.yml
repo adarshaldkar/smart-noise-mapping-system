@@ -22,6 +22,8 @@ services:
   noisemapper_consumer:
     build: ./consumer
     image: noisemapper_consumer:0.0.1
+    volumes:
+      - ./consumer:/opt/noisemapper
     networks:
       - private
     depends_on:
@@ -38,6 +40,11 @@ services:
     image: noisemapper_api:0.0.1
     ports:
       - "5000:5000"
+    volumes:
+      - ./api/static/audio:/opt/noisemapper/static/audio
+      - ./api/templates:/opt/noisemapper/templates
+    environment:
+      - GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
     networks:
       - private
     depends_on:

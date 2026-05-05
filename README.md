@@ -1,125 +1,105 @@
-# Noise Mapper
+# 🌍 Smart City Acoustic Forensics & Noise Mapping System
 
-This repository contains the different parts to register sound with a mobile phone in different locations and show it
-on a map.
+Welcome to the **Smart Noise Mapping System** – an end-to-end IoT, Machine Learning, and Generative AI pipeline designed to crowdsource, classify, and visualize urban acoustic data in real-time. 
 
-## Architecture
+This project acts as a "Waze for Noise Pollution", empowering citizens to record environmental sounds while providing city planners with actionable, AI-driven acoustic forensic reports.
 
-![architecture](pictures/noisemapper_architecture.png)
+---
 
-### Android
+## 🚀 Features
 
-The [Android](android) directory contains the Python code that records audio samples and the location of the phone, and 
-publishes the data to an MQTT broker. Then, the program goes to sleep for a configurable amount of time. 
+* **📱 Mobile App (Flutter):** A sleek, cross-platform mobile application that records 5-second raw audio bursts, captures precise GNSS/GPS coordinates, and pushes the payload to the local backend.
+* **🧠 Machine Learning (YAMNet):** A dedicated Python consumer that processes incoming audio queues using Google's **YAMNet** Deep Learning model to classify 521 distinct environmental sounds (e.g., Speech, Traffic, Sirens, Music).
+* **📊 Time-Series Database:** All processed acoustic metadata (RMS Amplitude, Peak Amplitude, Zero Crossing Rate, Spectral Centroids) is efficiently stored in **InfluxDB**.
+* **🗺️ Live Global Dashboard:** A dynamic Web UI built with Leaflet.js that automatically polls the database and plots real-time colored markers based on noise intensity and classification.
+* **📈 Advanced Analytics:** Full **Grafana** integration for deep-dive visualizations of acoustic trends over time.
+* **✨ Generative AI Reports:** A one-click "AI Report" feature that pipes database aggregates into Google's **Gemini 2.5 Flash** model to generate and export professional, downloadable PDF acoustic forensic reports.
 
-In order to run the Python code on Android, the 
-[QPython 3L](https://play.google.com/store/apps/details?id=org.qpython.qpy) app can be used. The code depends on the 
-[androidhelper](https://kylelk.github.io/html-examples/androidhelper.html) library, which is a deprecated project, and 
-poses several challenges, like being able to request updated location information, running in background, and maintaining 
-an active connection with the broker. 
+---
 
-### Consumer
+## 🏗️ System Architecture
 
-Docker service with basic code in Python that consumes from the broker upon reception of new messages, processes the 
-information and inserts it in the database. The processing is very basic, and consists in reading the coordinates and 
-the audio file, converting the audio file into an array of samples and extracting its mean amplitude value (used as a 
-measure of "amount of noise"), and inserting it together with the location where the sample was recorded, as well as 
-other metadata like the user ID and the user's session ID. 
+The entire backend is orchestrated using **Docker Compose** for seamless deployment and scaling.
 
-### API
+1. **Flutter App** -> `POST /collect` -> **Flask API**
+2. **Flask API** -> Publishes raw data to **MQTT Broker (Mosquitto)**
+3. **ML Consumer** -> Subscribes to MQTT -> Runs YAMNet inference -> Saves to **InfluxDB**
+4. **Flask Dashboard / Grafana** -> Queries InfluxDB for real-time visualization
+5. **Gemini REST API** -> Reads InfluxDB aggregates -> Generates PDF Report
 
-Docker service with an API implemented in Flask that delivers to the user a color-coded visualization of the noise in 
-every sampled location. The service uses the [folium](https://github.com/python-visualization/folium) library to show 
-the data on the map.
+---
 
-The whole folium package is included as part of this repository, since the version being used is a fork from the original 
-version. The motivation for the fork is to allow showing on the map single channel data (the only dimension for every 
-pixel is the 1D "noise" magnitude), while also having an alpha-channel to configure transparency. 
+## ⚙️ Prerequisites
 
-### Others
+Before you begin, ensure you have met the following requirements:
+* **Docker** & **Docker Compose** installed on your host machine.
+* **Flutter SDK** installed for the mobile application.
+* A valid **Google Gemini API Key**.
 
-* Message broker: MQTT protocol is used
-* Database: InfluxDB was chosen for simplicity. It should be replaced by a more GIS-oriented DB like Postgres + PostGIS
-* Metrics: some metrics are being recorded in the DB too, and can be visualized in a Grafana dashbaord that is also 
-included
+---
 
-## Installation
+## 🛠️ Installation & Setup
 
-SSH into the server and clone the repository. There is a [Makefile](Makefile) in the top directory that allows setting up the 
-environment and running all the required services. The only service not included is the MQTT broker, for which I used 
-[CloudAMQP](https://www.cloudamqp.com/). The [docker-compose](docker-compose.yml) can be modified to include an MQTT 
-broker. 
+### 1. Clone the Repository
+```bash
+git clone https://github.com/adarshaldkar/smart-noise-mapping-system.git
+cd smart-noise-mapping-system
+```
 
-There is a .env.template file in both the android and the consumer folders, that must be copied into a .env file and 
-set there the MQTT connection credentials. 
+### 2. Configure Environment Variables
+Inside the `noise_mapper` backend folder, open `docker-compose.yml` and insert your Gemini API Key in the `noisemapper_api` service section:
+```yaml
+environment:
+  - GEMINI_API_KEY=your_actual_api_key_here
+```
 
-## Calibration
+### 3. Start the Backend Infrastructure
+Navigate to the backend directory and spin up the Docker containers:
+```bash
+cd noise_mapper
+docker-compose up --build -d
+```
+This single command will boot up:
+* **Flask API** on `http://localhost:5000`
+* **Grafana** on `http://localhost:3000`
+* **InfluxDB** on `http://localhost:8086`
+* **Mosquitto MQTT** on `port 1883`
+* **ML Audio Consumer** (runs in background)
 
-I recorded several samples in locations that I considered noisy (big streets, construction works, ...) and quiet areas 
-(parks, pedestrian areas, ...). I took 60+ samples in quiet areas and 20+ in noisy areas. In the next picture, every 
-colour represents one recording of 5 seconds of duration.
-![quiet_and_noisy_amplitudes](pictures/quiet_and_noisy_amplitudes.png)
+### 4. Configure the Mobile App
+You must point the Flutter app to your laptop's IP address so it knows where to send the audio data.
+1. Find your IPv4 address (e.g., `192.168.1.5`). *Tip: Using a mobile hotspot guarantees a stable local IP.*
+2. Open `noise_mapper_app/lib/services/api_service.dart`.
+3. Update the fallback IP, or simply open the App's **Settings Screen** on your phone and type in your IP address.
 
+### 5. Run the Mobile App
+Connect your Android/iOS device and run:
+```bash
+cd noise_mapper_app
+flutter run
+```
 
-For each, I computed different statistics in order to choose the ones that qualitatively 
-showed the biggest difference between "quiet" and "noisy". The conclusion was that all the statistics I checked showed 
-similar results, and so I chose to use "mean()"
-![quiet_and_noisy_amplitude_stats](pictures/quiet_and_noisy_amplitude_stats.png)
+---
 
-I also used this step to select the dynamic range I wanted to use. Based on the calibration data, I selected `0.02` as 
-the upper bound for the mean value, meaning that samples with higher mean values would be still mapped to `0.02`. This 
-is to prevent having peaks that would distort the overall visualization. 
+## 🎮 Usage Guide
 
-## Tests 
+1. **Start Mapping:** Open the Flutter app on your phone, ensure location permissions are granted, and tap **START MAPPING**. The app will record and upload audio.
+2. **View the Map:** Open `http://localhost:5000/dashboard` on your laptop. You will see your real-time location plotted on the map.
+3. **Generate AI Report:** Click the **"✨ AI Report"** button on the dashboard. The system will analyze the recent data and generate a printable PDF Smart City Forensic Report.
+4. **Advanced Analytics:** Open `http://localhost:3000` to view the Grafana dashboard. Login with `admin` / `admin`.
 
-After that, I did many walks around Barcelona with the Android script running, and the resulting map looks like this:
-![map](pictures/map.png))
+---
 
-I used a Jet colormap to color code noise intensity, where green represents quiet, yellow mid-noisy and red very noisy. 
+## 🛠️ Technology Stack
+* **Frontend Mobile:** Flutter, Dart
+* **Backend API:** Python, Flask, Gunicorn
+* **Message Broker:** Eclipse Mosquitto (MQTT)
+* **Machine Learning:** TensorFlow, YAMNet, Librosa, SciPy
+* **Databases:** InfluxDB
+* **Data Visualization:** HTML5, Leaflet.js, Grafana
+* **Generative AI:** Google Gemini 2.5 Flash (REST API)
 
-Every sampled point is represented as a rectangle on the sampling location, and an attempt to propagate the value on 
-neighbouring pixels by making them have the same colour, but more transparent. 
+---
 
-
-# TODO
-* Consumer
-    * Apply noise classification using ML, label the data (cars, people talking, baby, music, ...) and be able to 
-    visualize the locations where every class is more frequent
-* API
-    * Create real API endpoints returning data in GeoJSON format. Then create MAP endpoints that call the API ones
-    * Create admin view and permission management (Django?)
-    * Make code generic for any latitude, longitude (currently only works in a box around Barcelona city)
-    * Support params to URL (filter by GNSS data only, or by new data only, or ...)
-* FE
-    * Add form to select min/max noise, hour of the day, day of the week, user, ...
-    * Add Grafana iframes to main site
-    * Create side by side comparison of noisy and quiet heatmaps
-    * Make sound pixels semi-transparent to show some background
-    * Improve averging between neighbouring pixels (now max wins all)
-    * Use hexagons instead of rectangles for visualization
-* Android
-    * Bundle the code into an APK (use Kivy?)
-    * Write android logs to file too
-    * Given the issues with keeping the MQTT connection, send the data via api instead
-    * Send location data and audio file in same message to the MQTT broker (codify the pos in a binary stream?)
-* Infrastructure
-    * Start own MQTT broker instead of CloudAMQP
-    * Add CI/CD to auto-deploy in GCP
-    * Add infra monitoring (allow checking from Grafana number of running docker containers, time since last restart, 
-    Rabbit queue size, etc)
-    * Replace Influx by PostgreSQL + PostGIS
-* Others
-    * Create domain name
-    * Generate timelapse of map evolution
-    * Create PR to Folium with change and import that branch version
-    * Unit testing
-    * Upgrade Python version being used
-    * Filter out some noises, e.g crying baby sound (or alternatively consider only cars noise)
-    * Compare results with Barcelona open data 
-
-## References
-
-* A project that estimated noise pollution based on OSM labels (streed width, etc): http://lukasmartinelli.ch/gis/2016/04/03/openstreetmap-noise-pollution-map.html 
-* An Android APP in Kotlin that sends the phone location to an MQTT broker: https://owntracks.org/ 
-
-this is my final year project , like the readme file ,  explain this project in detail , likle what it conatins evetrhing !!!
+## 👨‍💻 Developed By
+Developed by Adarsh and Team for the Final Year Engineering Project.

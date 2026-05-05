@@ -13,6 +13,10 @@ import json
 import time
 import paho.mqtt.publish as publish
 import uuid
+import requests
+
+# Configure Gemini
+api_key = os.environ.get("GEMINI_API_KEY")
 
 logging.basicConfig(format="%(asctime)s %(levelname)-8s %(message)s",
                     level=logging.INFO,
@@ -172,6 +176,17 @@ def collect():
         audio_file = flask.request.files['audio']
         audio_bytes = audio_file.read()
         
+        # Save audio file for playback on dashboard
+        audio_dir = os.path.join(app.root_path, 'static', 'audio')
+        os.makedirs(audio_dir, exist_ok=True)
+        # Use session_uuid and time to create a unique filename
+        filename = f"{metadata.get('session_uuid', 'unknown')}_{metadata.get('time', int(time.time()))}.wav"
+        filepath = os.path.join(audio_dir, filename)
+        with open(filepath, 'wb') as f:
+            f.write(audio_bytes)
+            
+        metadata["audio_filename"] = filename
+        
         # 2. Publish to MQTT broker so the consumer picks it up
         broker_host = "mosquitto"
         
@@ -291,6 +306,200 @@ def last_session():
     except Exception as e:
         logging.error(f"Error in last-session: {e}")
         return f"<h1>Error</h1><p>{str(e)}</p>"
+
+
+@app.route('/dashboard')
+def dashboard():
+    return flask.render_template('./dashboard.html')
+
+
+@app.route('/api/stats')
+def api_stats():
+    """Returns summary stats for the dashboard cards."""
+    try:
+        result = list(INFLUXDBCLIENT.query("SELECT * FROM samples WHERE test!='True' ORDER BY time DESC LIMIT 200;"))
+        if not result or len(result) == 0:
+            return flask.jsonify({"total": 0, "avg_db": 0, "peak": 0, "top_class": "N/A", "avg_confidence": 0, "avg_zcr": 0, "avg_centroid": 0})
+
+        samples = list(result[0])
+
+        dbs       = [s.get("sound_db") for s in samples if s.get("sound_db") is not None]
+        peaks     = [s.get("sound_peak") for s in samples if s.get("sound_peak") is not None]
+        confs     = [s.get("confidence") for s in samples if s.get("confidence") is not None]
+        zcrs      = [s.get("zero_crossing_rate") for s in samples if s.get("zero_crossing_rate") is not None]
+        centroids = [s.get("spectral_centroid") for s in samples if s.get("spectral_centroid") is not None]
+        classes   = [s.get("noise_class") for s in samples if s.get("noise_class")]
+
+        top_class = max(set(classes), key=classes.count) if classes else "N/A"
+
+        return flask.jsonify({
+            "total":          len(samples),
+            "avg_db":         round(np.mean(dbs), 2)       if dbs       else 0,
+            "peak":           round(max(peaks), 4)          if peaks     else 0,
+            "top_class":      top_class,
+            "avg_confidence": round(np.mean(confs) * 100, 1) if confs   else 0,
+            "avg_zcr":        round(np.mean(zcrs), 4)       if zcrs      else 0,
+            "avg_centroid":   round(np.mean(centroids), 1)  if centroids else 0,
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/stats: {e}")
+        return flask.jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/samples')
+def api_samples():
+    """Returns recent samples for the map and table. Supports filters."""
+    try:
+        noise_class = flask.request.args.get("class", None)
+        min_conf    = float(flask.request.args.get("min_conf", 0))
+        hours       = int(flask.request.args.get("hours", 24))
+
+        query = f"SELECT * FROM samples WHERE test!='True' AND time > now() - {hours}h"
+        if noise_class and noise_class != "all":
+            query += f" AND noise_class='{noise_class}'"
+        query += " ORDER BY time DESC LIMIT 500;"
+
+        result = list(INFLUXDBCLIENT.query(query))
+        if not result or len(result) == 0:
+            return flask.jsonify([])
+
+        samples = []
+        for s in result[0]:
+            conf = s.get("confidence", 0) or 0
+            if conf < min_conf:
+                continue
+            if s.get("lat") is None or s.get("lon") is None:
+                continue
+            samples.append({
+                "time":       s.get("time", ""),
+                "lat":        s.get("lat"),
+                "lon":        s.get("lon"),
+                "sound_db":   round(s.get("sound_db", 0) or 0, 2),
+                "sound_peak": round(s.get("sound_peak", 0) or 0, 4),
+                "sound_rms":  round(s.get("sound_rms", 0) or 0, 4),
+                "noise_class":       s.get("noise_class", "Unknown"),
+                "confidence":        round(conf * 100, 1),
+                "zero_crossing_rate": round(s.get("zero_crossing_rate", 0) or 0, 4),
+                "spectral_centroid":  round(s.get("spectral_centroid", 0) or 0, 1),
+                "spectral_rolloff":   round(s.get("spectral_rolloff", 0) or 0, 1),
+                "duration_s":         round(s.get("duration_s", 0) or 0, 2),
+                "session_uuid":       s.get("session_uuid", ""),
+                "audio_filename":     s.get("audio_filename", ""),
+                "user_name":          s.get("user_name", "Anonymous"),
+            })
+        return flask.jsonify(samples)
+    except Exception as e:
+        logging.error(f"Error in /api/samples: {e}")
+        return flask.jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/chart-data')
+def api_chart_data():
+    """Returns aggregated chart data: class distribution + dB over time."""
+    try:
+        result = list(INFLUXDBCLIENT.query("SELECT * FROM samples WHERE test!='True' ORDER BY time DESC LIMIT 500;"))
+        if not result or len(result) == 0:
+            return flask.jsonify({"class_dist": {}, "db_over_time": []})
+
+        samples = list(result[0])
+        class_dist = {}
+        db_over_time = []
+
+        for s in samples:
+            nc = s.get("noise_class", "Unknown") or "Unknown"
+            class_dist[nc] = class_dist.get(nc, 0) + 1
+
+            db_val = s.get("sound_db")
+            t_val  = s.get("time")
+            if db_val is not None and t_val is not None:
+                db_over_time.append({"t": str(t_val), "db": round(db_val, 2)})
+
+        # Reverse so chart shows oldest -> newest
+        db_over_time = list(reversed(db_over_time))[-50:]
+
+        return flask.jsonify({
+            "class_dist":   class_dist,
+            "db_over_time": db_over_time,
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/chart-data: {e}")
+        return flask.jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/generate-report', methods=['GET', 'POST'])
+def generate_report():
+    """Generates an AI report of the acoustic data using Gemini."""
+    try:
+        # 1. Fetch recent data (e.g. all points)
+        result = list(INFLUXDBCLIENT.query("SELECT * FROM samples WHERE test!='True' ORDER BY time DESC LIMIT 200;"))
+        if not result or len(result) == 0:
+            return flask.jsonify({"error": "No data available to generate a report."}), 400
+            
+        samples = list(result[0])
+        
+        # 2. Compute aggregate statistics for the AI
+        total_samples = len(samples)
+        db_levels = [s.get("sound_db") for s in samples if s.get("sound_db") is not None]
+        avg_db = sum(db_levels) / len(db_levels) if db_levels else 0
+        peak_db = max(db_levels) if db_levels else 0
+        
+        classes = {}
+        for s in samples:
+            c = s.get("noise_class", "Unknown") or "Unknown"
+            classes[c] = classes.get(c, 0) + 1
+            
+        top_class = max(classes, key=classes.get) if classes else "Unknown"
+        
+        # Create a condensed list of events for the AI
+        events = []
+        for s in samples[:15]: # Send the last 15 specific events
+            events.append(f"Class: {s.get('noise_class')}, dB: {round(s.get('sound_db', 0),1)}, Confidence: {round(s.get('confidence',0)*100,1)}%")
+
+        # 3. Construct Prompt
+        prompt = f"""You are a professional Smart City Acoustic Forensics AI.
+Generate a structured, professional, executive summary report for a city's noise pollution based on the following real-time sensor data.
+
+DATA SUMMARY:
+- Total Samples Analyzed: {total_samples}
+- Average dB Level: {round(avg_db, 2)} dB
+- Peak dB Level: {round(peak_db, 2)} dB
+- Most Common Noise Type: {top_class}
+
+RECENT SIGNIFICANT EVENTS:
+{chr(10).join(events)}
+
+REQUIREMENTS:
+1. Write the report in Markdown format.
+2. Include the following sections:
+   - Executive Summary
+   - Acoustic Profile Analysis (explain what the dB levels and classes mean for livability)
+   - Identified Anomalies / Hazards (if peak dB is > 75, highlight it)
+   - Recommendations for Urban Planning
+3. Keep it professional, objective, and around 200-300 words. Do not use generic pleasantries.
+"""
+
+        # 4. Generate Content with Gemini REST API
+        if not api_key:
+            return flask.jsonify({"error": "GEMINI_API_KEY environment variable is not set."}), 500
+            
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        headers = {'Content-Type': 'application/json'}
+        data = {
+            "contents": [{"parts": [{"text": prompt}]}]
+        }
+        
+        resp = requests.post(url, headers=headers, json=data)
+        if resp.status_code != 200:
+            return flask.jsonify({"error": f"Gemini API returned {resp.status_code}: {resp.text}"}), 500
+            
+        result_json = resp.json()
+        report_text = result_json['candidates'][0]['content']['parts'][0]['text']
+        
+        return flask.jsonify({"report_markdown": report_text})
+        
+    except Exception as e:
+        logging.error(f"Error generating AI report: {e}")
+        return flask.jsonify({"error": f"Failed to generate report: {str(e)}"}), 500
 
 
 if __name__ == "__main__":

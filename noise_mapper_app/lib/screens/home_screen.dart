@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import 'settings_screen.dart';
 
@@ -30,6 +31,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   
   String _uploadState = "READY"; // READY, RECORDING, UPLOADING, SUCCESS, ERROR
   Color _stateColor = Colors.greenAccent;
+  
+  final TextEditingController _nameController = TextEditingController();
+  String _userName = "Anonymous";
 
   @override
   void initState() {
@@ -39,8 +43,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
     
+    _loadUserName();
     _requestPermissions();
     _updateQueueCount();
+  }
+
+  Future<void> _loadUserName() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _userName = prefs.getString('user_name') ?? "Anonymous";
+      _nameController.text = _userName == "Anonymous" ? "" : _userName;
+    });
+    _apiService.setUserName(_userName);
+  }
+
+  Future<void> _saveUserName(String name) async {
+    final prefs = await SharedPreferences.getInstance();
+    String finalName = name.trim().isEmpty ? "Anonymous" : name.trim();
+    await prefs.setString('user_name', finalName);
+    setState(() {
+      _userName = finalName;
+    });
+    _apiService.setUserName(finalName);
   }
 
   Future<void> _updateQueueCount() async {
@@ -213,6 +237,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -233,6 +258,32 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       body: SafeArea(
         child: Column(
           children: [
+            // Name Input Field
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              child: TextField(
+                controller: _nameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: "Mapper's Name",
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  hintText: "Enter your name for the map...",
+                  hintStyle: const TextStyle(color: Colors.white24),
+                  prefixIcon: const Icon(Icons.person, color: Colors.blueAccent),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.05),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onSubmitted: _saveUserName,
+                onChanged: (val) {
+                  if (!_isRecording) _saveUserName(val);
+                },
+              ),
+            ),
+            
             // Session Telemetry Bar
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),

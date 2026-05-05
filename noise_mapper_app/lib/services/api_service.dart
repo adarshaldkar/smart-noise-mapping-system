@@ -7,15 +7,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ApiService {
   final String sessionUuid;
   final String userUuid;
+  String _userName = "Anonymous";
 
   ApiService() 
       : sessionUuid = const Uuid().v4(),
         userUuid = const Uuid().v4();
 
+  void setUserName(String name) {
+    _userName = name;
+  }
+
   Future<String> _getBackendUrl() async {
     final prefs = await SharedPreferences.getInstance();
     // Default to the IP we found earlier, but it can be changed in settings
-    String ip = prefs.getString('backend_ip') ?? "192.168.1.6";
+    String ip = prefs.getString('backend_ip') ?? "10.83.9.145";
     return "http://$ip:5000/collect";
   }
 
@@ -50,6 +55,7 @@ class ApiService {
         "alt": alt,
         "session_uuid": sessionUuid,
         "user_uuid": userUuid,
+        "user_name": _userName,
         "type": "new",
         "source": "gnss",
         "test": false,
