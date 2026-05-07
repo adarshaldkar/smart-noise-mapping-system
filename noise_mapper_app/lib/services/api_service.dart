@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,30 +21,35 @@ class ApiService {
 
   Future<String> _getBackendUrl() async {
     final prefs = await SharedPreferences.getInstance();
-    // Default to the IP we found earlier, but it can be changed in settings
-    String ip = prefs.getString('backend_ip') ?? "10.83.9.145";
+    final savedIp = prefs.getString('backend_ip')?.trim();
+    final fallbackHost = kIsWeb
+        ? 'localhost'
+        : (Platform.isAndroid ? '10.0.2.2' : 'localhost');
+    String ip = (savedIp == null || savedIp.isEmpty) ? fallbackHost : savedIp;
     return "http://$ip:5000/collect";
   }
 
   /// Sends data directly to the server. If it fails, saves to offline queue.
-  /// Returns "success", "queued", or "error".
+  /// Returns "noise_class", "queued", or "error".
   Future<String> sendData(String audioFilePath, double lat, double lon, double alt) async {
     final int timestampMs = DateTime.now().millisecondsSinceEpoch;
     
     // Attempt upload
-    bool success = await _uploadSample(audioFilePath, lat, lon, alt, timestampMs);
+    String? result = await _uploadSample(audioFilePath, lat, lon, alt, timestampMs);
     
-    if (success) {
-      return "success";
+    if (result != null) {
+      return result;
     } else {
       // Failed to upload, save to offline queue
+      print("Upload failed or timed out. Saving to offline queue...");
       await _queueOfflineSample(audioFilePath, lat, lon, alt, timestampMs);
       return "queued";
     }
   }
 
   /// Inner method to perform the actual HTTP request
-  Future<bool> _uploadSample(String audioFilePath, double lat, double lon, double alt, int timestampMs) async {
+  /// Returns the detected noise class on success, or null on failure
+  Future<String?> _uploadSample(String audioFilePath, double lat, double lon, double alt, int timestampMs) async {
     try {
       final String backendUrl = await _getBackendUrl();
 
@@ -71,18 +78,27 @@ class ApiService {
       );
 
       // Send
-      var response = await request.send().timeout(const Duration(seconds: 15));
+      var response = await request.send().timeout(const Duration(seconds: 10));
       
       if (response.statusCode == 200) {
-        print("Successfully uploaded noise sample! lat=$lat lon=$lon");
-        return true;
+        final respStr = await response.stream.bytesToString();
+        final data = jsonDecode(respStr);
+        String noiseClass = data['noise_class'] ?? "Success";
+        print("Successfully uploaded noise sample! Detected: $noiseClass");
+        return noiseClass;
       } else {
         print("Failed to upload. Status code: ${response.statusCode}");
-        return false;
+        return null;
       }
+    } on SocketException catch (e) {
+      print("Network Error: No Internet connection ($e)");
+      return null;
+    } on TimeoutException catch (e) {
+      print("Network Error: Connection timed out ($e)");
+      return null;
     } catch (e) {
       print("Network Error during upload: $e");
-      return false;
+      return null;
     }
   }
 
@@ -135,7 +151,7 @@ class ApiService {
           continue; // Drop from queue
         }
 
-        bool success = await _uploadSample(
+        String? result = await _uploadSample(
           path, 
           item['lat'], 
           item['lon'], 
@@ -143,7 +159,7 @@ class ApiService {
           item['timestamp']
         );
 
-        if (success) {
+        if (result != null) {
           syncedCount++;
           // Delete the temporary file now that it's uploaded
           try {

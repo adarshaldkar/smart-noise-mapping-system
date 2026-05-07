@@ -33,7 +33,7 @@ fi
 echo "Publishing pos JSON and audio file to MQTT broker using mosquitto_pub (dockerized)..."
 rx_time=$(date +%s)
 POS_JSON=$(cat <<JSON
-{"lat":41.38,"lon":2.17,"alt":10.0,"session_uuid":"smoke-session","user_uuid":"smoke-user","type":"test","source":"smoke","time":$rx_time,"test":true}
+{"lat":13.0827,"lon":80.2707,"alt":10.0,"session_uuid":"smoke-session","user_uuid":"smoke-user","type":"test","source":"smoke","time":$rx_time,"test":true}
 JSON
 )
 # Publish pos JSON
@@ -58,15 +58,3 @@ else
   echo "$RESULT" >&2
   exit 2
 fi
-echo "Publishing pos JSON and audio file to MQTT broker using mosquitto_pub (dockerized)..."
-rx_time=$(date +%s)
-POS_JSON=$(cat <<JSON
-{"lat":41.38,"lon":2.17,"alt":10.0,"session_uuid":"smoke-session","user_uuid":"smoke-user","type":"test","source":"smoke","time":$rx_time,"test":true}
-JSON
-)
-# Publish pos JSON
-echo "$POS_JSON" | docker run --rm -i --network noise_mapper_private eclipse-mosquitto mosquitto_pub -h mosquitto -t pos -s
-# small pause
-sleep 1
-# Publish binary mp4 to topic named by timestamp
-cat "$MP4" | docker run --rm -i --network noise_mapper_private eclipse-mosquitto mosquitto_pub -h mosquitto -t "$rx_time" -s

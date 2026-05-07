@@ -14,20 +14,20 @@ client.switch_database('noisemapper')
 print("Connected to InfluxDB, inserting test data...")
 
 # Static test data: 10 points across 2 sessions
-# lat/lon around Barcelona, sound values range from quiet (0.003) to loud (0.02)
+# lat/lon around Indian cities, sound values range from quiet (0.003) to loud (0.02)
 test_points = [
-    # Session 1 - a walk through a mixed area
-    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000000000000000, "fields": {"lat": 41.3870, "lon": 2.1700, "sound": 0.0045, "alt": 12.0}},
-    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000060000000000, "fields": {"lat": 41.3875, "lon": 2.1710, "sound": 0.0082, "alt": 11.5}},
-    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000120000000000, "fields": {"lat": 41.3880, "lon": 2.1720, "sound": 0.0153, "alt": 10.0}},
-    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000180000000000, "fields": {"lat": 41.3890, "lon": 2.1730, "sound": 0.0190, "alt":  9.0}},
-    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000240000000000, "fields": {"lat": 41.3895, "lon": 2.1735, "sound": 0.0200, "alt":  8.5}},
-    # Session 2 - quieter residential area
-    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003600000000000, "fields": {"lat": 41.3860, "lon": 2.1690, "sound": 0.0031, "alt": 13.0}},
-    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003660000000000, "fields": {"lat": 41.3865, "lon": 2.1695, "sound": 0.0064, "alt": 12.5}},
-    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003720000000000, "fields": {"lat": 41.3872, "lon": 2.1702, "sound": 0.0120, "alt": 11.0}},
-    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003780000000000, "fields": {"lat": 41.3885, "lon": 2.1725, "sound": 0.0050, "alt":  9.5}},
-    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003840000000000, "fields": {"lat": 41.3900, "lon": 2.1750, "sound": 0.0098, "alt": 10.5}},
+    # Session 1 - Chennai
+    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000000000000000, "fields": {"lat": 13.0827, "lon": 80.2707, "sound": 0.0045, "alt": 12.0}},
+    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000060000000000, "fields": {"lat": 13.0832, "lon": 80.2710, "sound": 0.0082, "alt": 11.5}},
+    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000120000000000, "fields": {"lat": 13.0838, "lon": 80.2715, "sound": 0.0153, "alt": 10.0}},
+    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000180000000000, "fields": {"lat": 13.0844, "lon": 80.2720, "sound": 0.0190, "alt":  9.0}},
+    {"measurement": "samples", "tags": {"session_uuid": "session-001", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745000240000000000, "fields": {"lat": 13.0850, "lon": 80.2724, "sound": 0.0200, "alt":  8.5}},
+    # Session 2 - Mumbai
+    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003600000000000, "fields": {"lat": 19.0760, "lon": 72.8777, "sound": 0.0031, "alt": 13.0}},
+    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003660000000000, "fields": {"lat": 19.0765, "lon": 72.8782, "sound": 0.0064, "alt": 12.5}},
+    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003720000000000, "fields": {"lat": 19.0772, "lon": 72.8788, "sound": 0.0120, "alt": 11.0}},
+    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003780000000000, "fields": {"lat": 19.0785, "lon": 72.8800, "sound": 0.0050, "alt":  9.5}},
+    {"measurement": "samples", "tags": {"session_uuid": "session-002", "user_uuid": "test-user", "test": "false", "source": "gnss", "type": "new"}, "time": 1745003840000000000, "fields": {"lat": 19.0800, "lon": 72.8820, "sound": 0.0098, "alt": 10.5}},
     # A few API metrics too (to test Grafana)
     {"measurement": "metrics", "tags": {}, "time": 1745000000000000000, "fields": {"api_response_time": 0.12}},
     {"measurement": "metrics", "tags": {}, "time": 1745003600000000000, "fields": {"api_response_time": 0.09}},

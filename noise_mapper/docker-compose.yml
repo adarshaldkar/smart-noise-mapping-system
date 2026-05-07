@@ -24,6 +24,7 @@ services:
     image: noisemapper_consumer:0.0.1
     volumes:
       - ./consumer:/opt/noisemapper
+      - ./api/static/audio:/opt/noisemapper/static/audio
     networks:
       - private
     depends_on:
@@ -31,6 +32,8 @@ services:
       - mosquitto
     env_file:
       - ./consumer/.env
+    environment:
+      - AM_I_IN_A_DOCKER_CONTAINER=true
     stdin_open: true
     tty: true
     restart: always
@@ -41,10 +44,12 @@ services:
     ports:
       - "5000:5000"
     volumes:
+      - ./api:/opt/noisemapper
       - ./api/static/audio:/opt/noisemapper/static/audio
       - ./api/templates:/opt/noisemapper/templates
     environment:
-      - GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
+      - GEMINI_API_KEY=AIzaSyAQ7Mh7tCecGwzUVCv7DzTnaSMy40ieC2g
+      - AM_I_IN_A_DOCKER_CONTAINER=true
     networks:
       - private
     depends_on:

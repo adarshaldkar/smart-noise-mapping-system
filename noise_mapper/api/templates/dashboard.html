@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -149,6 +149,27 @@
     }
     .btn-ai:hover { opacity: 0.85; }
 
+    .btn-demo {
+      margin-left: 10px;
+      background: linear-gradient(135deg, #3fb950, #2ea043);
+      border: none; color: white;
+      border-radius: 8px; padding: 8px 18px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: opacity .2s;
+    }
+    .btn-demo:hover { opacity: 0.85; }
+
+    .btn-clear {
+      margin-left: 10px;
+      background: rgba(248, 81, 73, 0.1);
+      border: 1px solid rgba(248, 81, 73, 0.4);
+      color: var(--red);
+      border-radius: 8px; padding: 8px 18px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-clear:hover { background: var(--red); color: white; }
+
     /* ── MODAL ── */
     .modal-overlay {
       display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -175,9 +196,21 @@
       padding: 20px; border-top: 1px solid var(--border);
       display: flex; justify-content: flex-end; gap: 10px;
     }
-    .modal-body h1, .modal-body h2, .modal-body h3 { color: white; margin-top: 1.5em; margin-bottom: 0.5em; }
-    .modal-body ul { padding-left: 20px; margin-bottom: 1em; }
-    .modal-body p { margin-bottom: 1em; }
+    
+    /* ── REPORT STYLING ── */
+    #reportContent {
+      font-family: 'Inter', sans-serif;
+      line-height: 1.7;
+      color: #e6edf3;
+    }
+    #reportContent h1 { color: #58a6ff; font-size: 24px; margin: 20px 0 15px; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+    #reportContent h2 { color: #58a6ff; font-size: 20px; margin: 25px 0 12px; }
+    #reportContent h3 { color: #bc8cff; font-size: 17px; margin: 20px 0 10px; }
+    #reportContent p { margin-bottom: 15px; font-size: 15px; }
+    #reportContent ul, #reportContent ol { margin-bottom: 15px; padding-left: 25px; }
+    #reportContent li { margin-bottom: 8px; }
+    #reportContent hr { border: 0; border-top: 1px solid #30363d; margin: 25px 0; }
+    #reportContent blockquote { border-left: 4px solid #30363d; padding-left: 15px; color: #8b949e; font-style: italic; }
 
 
     /* ── MAIN CONTENT ── */
@@ -304,6 +337,7 @@
     <a href="/dashboard" class="active">Dashboard</a>
     <a href="/noisemap">Map View</a>
     <a href="/heatmap">Heat Map</a>
+    <a href="http://localhost:3000/d/noise_mapper_v2" target="_blank" style="color:var(--orange)">📊 Grafana</a>
   </nav>
   <div class="header-right">
     <div class="live-badge"><div class="live-dot"></div> LIVE</div>
@@ -359,8 +393,9 @@
     <select id="f-hours">
       <option value="1">Last 1 hour</option>
       <option value="6">Last 6 hours</option>
-      <option value="24" selected>Last 24 hours</option>
-      <option value="168">Last 7 days</option>
+      <option value="24">Last 24 hours</option>
+      <option value="168" selected>Last 7 days</option>
+      <option value="8760">All Time</option>
     </select>
     <label style="margin-left:12px">Noise Class</label>
     <select id="f-class">
@@ -374,8 +409,10 @@
     <label style="margin-left:12px">Min Confidence</label>
     <input type="range" id="f-conf" min="0" max="1" step="0.05" value="0">
     <span class="conf-val" id="conf-label">0%</span>
-    <button class="btn-refresh" onclick="loadAll(true)">⟳ Refresh</button>
-    <button class="btn-ai" onclick="generateReport()">✨ AI Report</button>
+    <button class="btn-refresh" onclick="loadAll()">↻ Refresh</button>
+      <button class="btn-demo" onclick="injectDemoData()">🚀 Demo Data</button>
+      <button class="btn-clear" onclick="clearDemoData()">🗑️ Clear Demo</button>
+      <button class="btn-ai" onclick="generateReport()">✨ AI Report</button>
   </div>
 
   <!-- MAP + SIDEBAR -->
@@ -452,22 +489,29 @@
 // ── STATE ──
 let map, markersLayer;
 let chartClass, chartDb;
-const CLASS_COLORS = {
-  Speech:  '#58a6ff',
-  Silence: '#3fb950',
-  Traffic: '#f85149',
-  Animal:  '#f0883e',
-  Music:   '#bc8cff',
-  Unknown: '#7d8590',
-};
-
-function classColor(c) { return CLASS_COLORS[c] || CLASS_COLORS.Unknown; }
+// ── HELPERS ──
+function classColor(cls) {
+  const colorMap = {
+    'Speech': '#58a6ff',
+    'Music': '#bc8cff',
+    'Traffic': '#f0883e',
+    'Siren': '#f85149',
+    'Animal': '#e3b341',
+    'Gunshot': '#ff0000',
+    'Silence': '#3fb950'
+  };
+  return colorMap[cls] || '#7d8590';
+}
 
 function dbColor(db) {
-  if (db < 45) return '#3fb950'; // Green
-  if (db <= 65) return '#e3b341'; // Yellow
-  if (db <= 85) return '#f0883e'; // Orange
-  return '#f85149'; // Red
+  // Convert negative digital dB to positive environmental dB for display logic
+  let displayDb = db;
+  if (db < 0) displayDb = db + 100;
+  
+  if (displayDb <= 45) return '#3fb950'; // Green (Safe)
+  if (displayDb <= 65) return '#e3b341'; // Yellow (Moderate)
+  if (displayDb <= 85) return '#f0883e'; // Orange (Loud)
+  return '#f85149'; // Red (Hazard)
 }
 
 // ── INIT MAP ──
@@ -485,13 +529,13 @@ function initMap() {
 async function loadStats() {
   const res  = await fetch('/api/stats');
   const data = await res.json();
-  document.getElementById('s-db').textContent      = data.avg_db  ?? '—';
-  document.getElementById('s-peak').textContent    = data.peak    ?? '—';
-  document.getElementById('s-class').textContent   = data.top_class ?? '—';
-  document.getElementById('s-conf').textContent    = (data.avg_confidence ?? '—') + '% confidence';
-  document.getElementById('s-total').textContent   = data.total   ?? '—';
-  document.getElementById('s-zcr').textContent     = data.avg_zcr ?? '—';
-  document.getElementById('s-centroid').textContent = (data.avg_centroid ?? '—') + ' Hz';
+  document.getElementById('s-db').textContent       = (data.avg_db ?? '—') + ' dB';
+  document.getElementById('s-peak').textContent     = (data.peak_db ?? '—') + ' dB';
+  document.getElementById('s-class').textContent    = data.top_class ?? '—';
+  document.getElementById('s-conf').textContent     = (data.avg_confidence ?? '—') + '% avg confidence';
+  document.getElementById('s-total').textContent    = data.total_samples ?? '—';
+  document.getElementById('s-zcr').textContent      = data.avg_zcr ?? '—';
+  document.getElementById('s-centroid').textContent  = (data.avg_centroid ?? '—') + ' Hz';
 }
 
 // ── LOAD SAMPLES → MAP + TABLE ──
@@ -513,46 +557,63 @@ async function loadSamples(isInitialLoad = false) {
     const classCol = classColor(s.noise_class);
     const dbCol = dbColor(s.sound_db);
     
-    // Create a square marker that stays the same pixel size regardless of zoom
-    const squareIcon = L.divIcon({
-      className: 'custom-square-marker',
-      html: `<div style="background-color: ${dbCol}; width: 14px; height: 14px; border: 1px solid #fff; opacity: 0.8;"></div>`,
+    // Ensure display dB is positive
+    const displayDb = s.sound_db < 0 ? (s.sound_db + 100).toFixed(1) : s.sound_db;
+    
+    // Create a circular marker that looks more attractive
+    const circleIcon = L.divIcon({
+      className: 'custom-circle-marker',
+      html: `<div style="background-color: ${dbCol}; width: 14px; height: 14px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 10px ${dbCol}; opacity: 0.9;"></div>`,
       iconSize: [14, 14]
     });
     
-    const rect = L.marker([s.lat, s.lon], { icon: squareIcon });
+    const rect = L.marker([s.lat, s.lon], { icon: circleIcon });
 
     const popupHtml = `
       <div style="font-family:Inter,sans-serif;min-width:240px">
         <div style="font-weight:700;font-size:15px;margin-bottom:8px">
-          <span style="color:${classCol}">⬤</span> ${s.noise_class}
-          <span style="font-size:11px;color:#7d8590;margin-left:4px">${s.confidence}% conf</span>
+          <span style="color:${classCol}">⬤</span> ${s.noise_class || 'Unknown'}
+          <span style="font-size:11px;color:#7d8590;margin-left:4px">${s.confidence || 0}% conf</span>
         </div>
         <div class="popup-grid">
-          <div class="popup-item"><div class="k">dB LEVEL</div><div class="v" style="color:#58a6ff">${s.sound_db} dB</div></div>
-          <div class="popup-item"><div class="k">PEAK</div><div class="v" style="color:#f85149">${s.sound_peak}</div></div>
-          <div class="popup-item"><div class="k">RMS</div><div class="v">${s.sound_rms}</div></div>
-          <div class="popup-item"><div class="k">ZCR</div><div class="v" style="color:#f0883e">${s.zero_crossing_rate}</div></div>
-          <div class="popup-item"><div class="k">CENTROID</div><div class="v" style="color:#e3b341">${s.spectral_centroid} Hz</div></div>
-          <div class="popup-item"><div class="k">ROLLOFF</div><div class="v">${s.spectral_rolloff} Hz</div></div>
-          <div class="popup-item"><div class="k">DURATION</div><div class="v">${s.duration_s}s</div></div>
-          <div class="popup-item"><div class="k">GPS</div><div class="v" style="font-size:11px">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</div></div>
+          <div class="popup-item"><div class="k">dB LEVEL</div><div class="v" style="color:#58a6ff">${displayDb} dB</div></div>
+          <div class="popup-item"><div class="k">PEAK</div><div class="v" style="color:#f85149">${s.sound_peak || 0}</div></div>
+          <div class="popup-item"><div class="k">RMS</div><div class="v">${s.sound_rms || 0}</div></div>
+          <div class="popup-item"><div class="k">ZCR</div><div class="v">${s.zero_crossing_rate || 0}</div></div>
+          <div class="popup-item"><div class="k">CENTROID</div><div class="v" style="color:#e3b341">${s.spectral_centroid || 0} Hz</div></div>
+          <div class="popup-item"><div class="k">ROLLOFF</div><div class="v">${s.spectral_rolloff || 0} Hz</div></div>
+          <div class="popup-item"><div class="k">DURATION</div><div class="v">${s.duration_s || 0}s</div></div>
+          <div class="popup-item"><div class="k">GPS</div><div class="v" style="font-size:9px">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</div></div>
         </div>
-        <div style="margin-top:8px;font-size:10px;color:#7d8590">
-          🕐 ${new Date(s.time).toLocaleString()}<br>
-          🆔 ${s.session_uuid.substring(0,8).toUpperCase()}<br>
-          👤 <b>Mapped by:</b> ${s.user_name || "Anonymous"}
+        
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid #30363d;font-size:11px;color:#7d8590">
+          <div>🕒 ${new Date(s.time).toLocaleString()}</div>
+          <div>🆔 ${s.session_uuid || 'N/A'}</div>
+          <div>👤 Mapped by: ${s.user_name || 'Anonymous'}</div>
         </div>
-        ${s.audio_filename ? `<div style="margin-top:10px;"><audio controls src="/static/audio/${s.audio_filename}" style="width:100%; height:28px;"></audio></div>` : ''}
-      </div>`;
+
+        ${s.audio_filename ? `
+          <div style="margin-top:12px;">
+            <audio controls style="width:100%;height:32px;">
+              <source src="/static/audio/${s.audio_filename}" type="audio/mp4">
+              Your browser does not support the audio element.
+            </audio>
+          </div>
+        ` : ''}
+      </div>
+    `;
 
     rect.bindPopup(popupHtml, { maxWidth: 300 });
     markersLayer.addLayer(rect);
     bounds.push([s.lat, s.lon]);
   });
 
-  if (bounds.length > 0 && isInitialLoad) {
+  if (bounds.length === 1) {
+    map.setView(bounds[0], 16);
+  } else if (bounds.length > 1) {
     map.fitBounds(bounds, { padding: [40, 40] });
+  } else if (isInitialLoad) {
+    map.setView([20, 78], 5);
   }
 
   document.getElementById('map-count').textContent = samples.length + ' points';
@@ -565,15 +626,18 @@ async function loadSamples(isInitialLoad = false) {
     return;
   }
 
-  list.innerHTML = samples.slice(0, 30).map(s => `
+  list.innerHTML = samples.slice(0, 30).map(s => {
+    const displayDb = s.sound_db < 0 ? (s.sound_db + 100).toFixed(1) : s.sound_db;
+    return `
     <div class="sample-row" onclick="map.flyTo([${s.lat},${s.lon}],17)">
       <span class="class-badge" style="background:${classColor(s.noise_class)}22;color:${classColor(s.noise_class)};border:1px solid ${classColor(s.noise_class)}44">${s.noise_class}</span>
       <div class="sample-meta">
         <div class="coords">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</div>
         <div class="time">${new Date(s.time).toLocaleTimeString()} · ${s.confidence}% conf · ${s.spectral_centroid} Hz</div>
       </div>
-      <div class="sample-db" style="color:${s.sound_db < -50 ? 'var(--green)' : s.sound_db < -30 ? 'var(--orange)' : 'var(--red)'}">${s.sound_db}<br><span style="font-size:11px;color:var(--muted)">dB</span></div>
-    </div>`).join('');
+      <div class="sample-db" style="color:${dbColor(s.sound_db)}">${displayDb}<br><span style="font-size:11px;color:var(--muted)">dB</span></div>
+    </div>`;
+  }).join('');
 }
 
 // ── LOAD CHARTS ──
@@ -640,6 +704,75 @@ document.getElementById('f-conf').addEventListener('input', function() {
   document.getElementById('conf-label').textContent = Math.round(this.value * 100) + '%';
 });
 
+// ── DEMO DATA INJECTION ──
+async function injectDemoData() {
+  if (!confirm("Inject 25 diverse noise samples for demonstration?")) return;
+  
+  const btn = document.querySelector('.btn-demo');
+  const originalText = btn.textContent;
+  btn.textContent = "⏳ Injecting...";
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/inject-demo', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('✅ 25 demo points injected! Siren, Traffic, Speech & more.', 'green');
+      loadAll(true);
+    } else {
+      throw new Error(data.error);
+    }
+  } catch (err) {
+    showToast('❌ Error injecting demo data: ' + err.message, 'red');
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+async function clearDemoData() {
+  if (!confirm("Remove all injected demo data points? This will not affect real sensor data.")) return;
+  
+  const btn = document.querySelector('.btn-clear');
+  const originalText = btn.textContent;
+  btn.textContent = "⏳ Clearing...";
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/clear-demo', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('🗑️ Demo data cleared. Map is now showing only real data.', 'green');
+      loadAll(true);
+    } else {
+      throw new Error(data.error);
+    }
+  } catch (err) {
+    showToast('❌ Error clearing data: ' + err.message, 'red');
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+// ── TOAST NOTIFICATION (replaces blocking alert()) ──
+function showToast(message, type = 'green') {
+  const colors = { green: '#3fb950', red: '#f85149', blue: '#58a6ff' };
+  const toast = document.createElement('div');
+  toast.style.cssText = `
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    background: #161b22; color: ${colors[type] || colors.green};
+    border: 1px solid ${colors[type] || colors.green}44;
+    border-radius: 10px; padding: 12px 24px;
+    font-family: Inter, sans-serif; font-size: 14px; font-weight: 600;
+    z-index: 99999; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    animation: fadeInUp 0.3s ease;
+  `;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3500);
+}
+
 // ── AI REPORT GENERATION ──
 async function generateReport() {
   const modal = document.getElementById('aiModal');
@@ -653,7 +786,13 @@ async function generateReport() {
     if (data.error) throw new Error(data.error);
     
     // Parse markdown to HTML
-    content.innerHTML = marked.parse(data.report_markdown);
+    if (window.marked && typeof marked.parse === 'function') {
+      content.innerHTML = marked.parse(data.report_markdown);
+    } else if (window.marked) {
+      content.innerHTML = marked(data.report_markdown);
+    } else {
+      content.innerHTML = data.report_markdown.replace(/\n/g, '<br>');
+    }
   } catch (err) {
     content.innerHTML = `<div style="color:var(--red);padding:20px;">Error generating report: ${err.message}</div>`;
   }
@@ -663,22 +802,51 @@ async function generateReport() {
 function downloadPDF() {
   const element = document.getElementById('reportContent');
   const opt = {
-    margin:       15,
-    filename:     'City_Acoustic_Report.pdf',
+    margin:       [15, 15],
+    filename:     'City_Acoustic_Forensics_Report.pdf',
     image:        { type: 'jpeg', quality: 0.98 },
-    html2canvas:  { scale: 2, useCORS: true, logging: false },
+    html2canvas:  { scale: 3, useCORS: true, logging: false, letterRendering: true },
     jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
   };
   
-  // Create a temporary clone to style it properly for printing (black text on white bg)
-  const clone = element.cloneNode(true);
-  clone.style.backgroundColor = '#ffffff';
-  clone.style.color = '#000000';
-  clone.style.padding = '20px';
-  const headings = clone.querySelectorAll('h1, h2, h3');
-  headings.forEach(h => h.style.color = '#000000');
+  // Create a high-quality printable version
+  const printContainer = document.createElement('div');
+  printContainer.style.padding = '40px 60px';
+  printContainer.style.backgroundColor = '#ffffff';
+  printContainer.style.color = '#111827';
+  printContainer.style.fontFamily = "'Helvetica', 'Arial', sans-serif";
   
-  html2pdf().set(opt).from(clone).save();
+  // Professional Header
+  const header = `
+    <div style="border-bottom: 2px solid #111827; padding-bottom: 20px; margin-bottom: 30px;">
+      <h1 style="margin: 0; color: #111827; font-size: 28px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Smart City Acoustic Forensics Report</h1>
+      <div style="margin-top: 10px; display: flex; justify-content: space-between; font-size: 12px; color: #4b5563; font-weight: 600;">
+        <span>Generated: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+        <span>ID: ACF-${Math.floor(Date.now()/1000)}</span>
+      </div>
+    </div>
+  `;
+  
+  // Processed Content
+  const reportBody = element.innerHTML
+    .replace(/<h1/g, '<h2 style="color:#111827; font-size:22px; margin-top:30px; border-bottom:1px solid #e5e7eb; padding-bottom:8px;"')
+    .replace(/<h2/g, '<h3 style="color:#111827; font-size:18px; margin-top:25px;"')
+    .replace(/<h3/g, '<h4 style="color:#374151; font-size:16px; margin-top:20px;"')
+    .replace(/<p/g, '<p style="font-size:14px; line-height:1.6; color:#374151; margin-bottom:15px;"')
+    .replace(/<li/g, '<li style="font-size:14px; color:#374151; margin-bottom:8px;"')
+    .replace(/<hr/g, '<hr style="border:0; border-top:1px solid #e5e7eb; margin:30px 0;"');
+
+  printContainer.innerHTML = header + reportBody;
+  
+  // Footer
+  const footer = `
+    <div style="margin-top: 50px; border-top: 1px solid #e5e7eb; padding-top: 20px; font-size: 10px; color: #9ca3af; text-align: center;">
+      This report was autonomously generated by the Smart City Noise Mapping AI using real-time IoT sensor telemetry.
+    </div>
+  `;
+  printContainer.innerHTML += footer;
+
+  html2pdf().set(opt).from(printContainer).save();
 }
 
 // ── INIT ──

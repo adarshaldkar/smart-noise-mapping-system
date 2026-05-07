@@ -14,13 +14,13 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 # Get the directory where this script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Sample locations in Barcelona using REAL audio files from your data folder
+# Sample locations in India using REAL audio files from your data folder
 locations = [
-    {"lat": 41.3851, "lon": 2.1734, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667814315_audio_record_v2.mp4"), "name": "Noisy Area 1 (Sagrada Familia)"},
-    {"lat": 41.3874, "lon": 2.1686, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667815853_audio_record_v2.mp4"), "name": "Noisy Area 2 (City Center)"},
-    {"lat": 41.3900, "lon": 2.1600, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667816060_audio_record_v2.mp4"), "name": "Noisy Area 3 (Street)"},
-    {"lat": 41.3820, "lon": 2.1750, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667815817_audio_record_v2.mp4"), "name": "Medium Noise (Avenue)"},
-    {"lat": 41.3950, "lon": 2.1650, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667814736_audio_record_v2.mp4"), "name": "Quiet Area (Park)"},
+    {"lat": 13.0827, "lon": 80.2707, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667814315_audio_record_v2.mp4"), "name": "Chennai - Marina Beach"},
+    {"lat": 19.0760, "lon": 72.8777, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667815853_audio_record_v2.mp4"), "name": "Mumbai - Gateway of India"},
+    {"lat": 28.6139, "lon": 77.2090, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667816060_audio_record_v2.mp4"), "name": "Delhi - Connaught Place"},
+    {"lat": 12.9716, "lon": 77.5946, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667815817_audio_record_v2.mp4"), "name": "Bengaluru - MG Road"},
+    {"lat": 22.5726, "lon": 88.3639, "file": os.path.join(SCRIPT_DIR, "data", "noisy_1667814736_audio_record_v2.mp4"), "name": "Kolkata - Park Street"},
 ]
 
 def publish_audio_sample(client, location, session_uuid, user_uuid):
@@ -71,11 +71,11 @@ def main():
     
     time.sleep(2)  # Wait for connection
     
-    session_uuid = "sample-session-barcelona"
-    user_uuid = "demo-user-barcelona"
+    session_uuid = "sample-session-india"
+    user_uuid = "demo-user-india"
     
     print("\n" + "="*60)
-    print(f"📊 Publishing {len(locations)} Real Audio Samples from Barcelona...")
+    print(f"📊 Publishing {len(locations)} Real Audio Samples from India...")
     print("="*60 + "\n")
     
     # Publish each sample
@@ -105,7 +105,7 @@ def main():
     print("="*60)
     print("\n📍 Check your noise map at: http://localhost:5000/noisemap")
     print("📊 Check Grafana dashboard at: http://localhost:3000")
-    print("\n🎵 Real Barcelona audio recordings are now being analyzed!")
+    print("\n🎵 Real Indian audio recordings are now being analyzed!")
 
 
 if __name__ == "__main__":

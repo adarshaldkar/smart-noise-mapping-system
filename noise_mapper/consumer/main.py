@@ -2,7 +2,7 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 from influxdb import InfluxDBClient
 import json
-from moviepy.editor import AudioFileClip
+from moviepy.editor import AudioFileClip  # type: ignore[import-not-found]
 import numpy as np
 import tempfile
 import os
@@ -23,19 +23,26 @@ INFLUX_DATABASE = "noisemapper"
 if os.environ.get('AM_I_IN_A_DOCKER_CONTAINER', False):
     INFLUX_HOST = "influxdb"
 else:
-    INFLUX_HOST = "0.0.0.0"
+    INFLUX_HOST = "localhost"
 
-MQTT_HOST = os.getenv("MQTT_HOST")
-MQTT_PORT = int(os.getenv("MQTT_PORT"))
-MQTT_USERNAME = os.getenv("MQTT_USERNAME")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+MQTT_HOST = os.getenv("MQTT_HOST", "mosquitto" if os.environ.get('AM_I_IN_A_DOCKER_CONTAINER', False) else "localhost")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 
-INFLUXDBCLIENT = InfluxDBClient(host=INFLUX_HOST, port=INFLUX_PORT, database=INFLUX_DATABASE)
+INFLUXDBCLIENT = InfluxDBClient(host=INFLUX_HOST, port=INFLUX_PORT)
+try:
+    INFLUXDBCLIENT.create_database(INFLUX_DATABASE)
+    INFLUXDBCLIENT.switch_database(INFLUX_DATABASE)
+    logging.info(f"Connected to InfluxDB at {INFLUX_HOST}:{INFLUX_PORT}, database '{INFLUX_DATABASE}' is ready.")
+except Exception as e:
+    logging.error(f"Could not initialize InfluxDB: {e}")
 
 point = {}
 
 # All keys required from BOTH pos + audio messages before writing to InfluxDB
-REQUIRED_KEYS = {"lat", "lon", "sound", "session_uuid", "user_uuid", "type", "source", "test"}
+# Note: audio features like 'sound', 'sound_rms' etc. are added by compute_audio_features()
+REQUIRED_KEYS = {"lat", "lon", "session_uuid", "user_uuid", "type", "source", "test", "noise_class"}
 
 
 def compute_audio_features(audio_arr, sample_rate):
@@ -52,13 +59,14 @@ def compute_audio_features(audio_arr, sample_rate):
     # --- Amplitude ---
     mean_amp = float(np.mean(abs_arr))
     features["sound"] = mean_amp                                        # raw mean amplitude (backward compat)
-    features["sound_db"] = float(20 * np.log10(max(mean_amp, 1e-9)))   # mean amplitude in dB
+    # Calibrated dB: Add 100 to map relative digital dB (-60 to 0) to realistic environmental dB (40 to 100)
+    features["sound_db"] = float(20 * np.log10(max(mean_amp, 1e-9)) + 100)
     features["sound_peak"] = float(np.max(abs_arr))                     # peak amplitude (detects spikes)
 
     # --- RMS Energy (better loudness measure than mean amplitude) ---
     rms = float(np.sqrt(np.mean(audio_arr ** 2)))
     features["sound_rms"] = rms
-    features["sound_rms_db"] = float(20 * np.log10(max(rms, 1e-9)))    # RMS in dB
+    features["sound_rms_db"] = float(20 * np.log10(max(rms, 1e-9)) + 100)    # RMS in dB
 
     # --- Variability ---
     features["sound_variance"] = float(np.var(audio_arr))              # low=steady hum, high=erratic noise
@@ -98,6 +106,7 @@ def mp4_audio_to_arr(mp4_audio):
 
     try:
         clip = AudioFileClip(f"{filename}.mp4")
+        sample_rate = clip.fps
         audio_array = clip.to_soundarray()
         clip.close()
         os.remove(f"{filename}.mp4")
@@ -106,7 +115,7 @@ def mp4_audio_to_arr(mp4_audio):
         if len(audio_array.shape) > 1:
             audio_array = np.mean(audio_array, axis=1)
 
-        return audio_array, clip.fps
+        return audio_array, sample_rate
 
     except Exception as e:
         if os.path.exists(f"{filename}.mp4"):
@@ -181,24 +190,33 @@ def on_message(client, userdata, message):
         location_type = point[rx_time].pop("type")
         location_source = point[rx_time].pop("source")
         test = point[rx_time].pop("test")
+        
+        # Pull noise_class out to use as a TAG for better indexing and dashboard consistency
+        noise_class = point[rx_time].pop("noise_class", "unclassified")
 
         try:
+            point_fields = dict(point[rx_time])
+            point_fields["noise_class"] = noise_class
+            # rx_time is in milliseconds from the Flutter app.
+            # Pass it directly with time_precision='ms' to avoid int64 overflow.
             point_out = {
                 "measurement": "samples",
-                "fields": point[rx_time],
-                "time": int(rx_time * 1e6)
+                "fields": point_fields,
+                "time": int(rx_time)  # milliseconds
             }
             ret = INFLUXDBCLIENT.write_points(
                 [point_out],
+                time_precision='ms',  # <-- tell InfluxDB the timestamp is in ms
                 tags={
                     "session_uuid": session_uuid,
                     "user_uuid": user_uuid,
                     "type": location_type,
                     "source": location_source,
-                    "test": test
+                    "test": str(test),
+                    "noise_class_tag": noise_class
                 }
             )
-            logging.info(f"Point inserted in influx. ret={ret}. Fields: {list(point[rx_time].keys())}")
+            logging.info(f"Point inserted in influx (Class: {noise_class}). ret={ret}.")
             del point[rx_time]
         except Exception as e:
             logging.error(f"Error writing point: {e}")
@@ -207,7 +225,8 @@ def on_message(client, userdata, message):
 if __name__ == "__main__":
     client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION1)
     client.on_message = on_message
-    client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
+    if MQTT_USERNAME or MQTT_PASSWORD:
+        client.username_pw_set(username=MQTT_USERNAME, password=MQTT_PASSWORD)
     client.connect(MQTT_HOST)
     logging.info("Broker connection established")
     client.subscribe("#")

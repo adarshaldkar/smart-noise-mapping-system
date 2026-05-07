@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -20,8 +22,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSavedIp() async {
     final prefs = await SharedPreferences.getInstance();
+    final fallbackHost = kIsWeb
+        ? 'localhost'
+        : (Platform.isAndroid ? '10.0.2.2' : 'localhost');
     setState(() {
-      _ipController.text = prefs.getString('backend_ip') ?? "192.168.1.6";
+      _ipController.text = prefs.getString('backend_ip') ?? fallbackHost;
     });
   }
 
@@ -65,7 +70,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             const Text(
-              'Enter your computer\'s Wi-Fi IP address so the app knows where to send the noise data.',
+              'Enter the host IP of the machine running the Noise Mapper backend so the app knows where to send noise data.',
               style: TextStyle(color: Colors.white70),
             ),
             const SizedBox(height: 24),
@@ -73,7 +78,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               controller: _ipController,
               decoration: InputDecoration(
                 labelText: 'Backend IP Address',
-                hintText: 'e.g. 192.168.1.6',
+                hintText: 'e.g. 192.168.x.x or localhost for desktop/emulator',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),

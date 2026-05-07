@@ -195,7 +195,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           );
 
           if (mounted) {
-            if (result == "success") {
+            if (result != "queued" && result != "error") {
+              // Any non-error result (noise class name like "Speech", "Traffic", etc.) = success
               setState(() {
                 _samplesSent++;
                 _uploadState = "SUCCESS";
@@ -256,34 +257,35 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ],
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            // Name Input Field
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: TextField(
-                controller: _nameController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: "Mapper's Name",
-                  labelStyle: const TextStyle(color: Colors.white54),
-                  hintText: "Enter your name for the map...",
-                  hintStyle: const TextStyle(color: Colors.white24),
-                  prefixIcon: const Icon(Icons.person, color: Colors.blueAccent),
-                  filled: true,
-                  fillColor: Colors.white.withOpacity(0.05),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(15),
-                    borderSide: BorderSide.none,
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              // Name Input Field
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: TextField(
+                  controller: _nameController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: "Mapper's Name",
+                    labelStyle: const TextStyle(color: Colors.white54),
+                    hintText: "Enter your name for the map...",
+                    hintStyle: const TextStyle(color: Colors.white24),
+                    prefixIcon: const Icon(Icons.person, color: Colors.blueAccent),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
+                  onSubmitted: _saveUserName,
+                  onChanged: (val) {
+                    if (!_isRecording) _saveUserName(val);
+                  },
                 ),
-                onSubmitted: _saveUserName,
-                onChanged: (val) {
-                  if (!_isRecording) _saveUserName(val);
-                },
               ),
-            ),
-            
+
             // Session Telemetry Bar
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -303,8 +305,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
             ),
             
-            const Spacer(),
-            
+            const SizedBox(height: 16),
+
             // Live dB Visualizer
             Stack(
               alignment: Alignment.center,
@@ -372,8 +374,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ],
             ),
             
-            const Spacer(),
-            
+            const SizedBox(height: 16),
+
             // Location Info Card (Glassmorphic)
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
@@ -449,6 +451,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
             ),
           ],
+        ),
         ),
       ),
     );
